@@ -36,7 +36,6 @@ import consistency_graph
 from scipy.spatial import KDTree
 import numpy as np
 from gaussian_hierarchy._C import  get_spt_cut_cuda
-from stp_gaussian_rasterization import ExtendedSettings
 from gaussian_renderer import occlusion_cull
 import json
 import pickle
@@ -84,8 +83,8 @@ Use_MIP_respawn = False
 # SPTs
 Storage_Device = 'cpu'
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 100 #0.025
-Target_Granularity_Pixels = 2
+SPT_Root_Volume = 5 #0.025
+Target_Granularity_Pixels = 5
 Cache_SPTs = True
 Reuse_SPT_Tolerarance = 0.1
 #View Selection
@@ -123,7 +122,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
     #torch.cuda.memory._record_memory_history()
     #torch.autograd.set_detect_anomaly(True)
     
-    splat_settings = ExtendedSettings.from_json('/home/felix-windisch/hierarchical-LOD-gaussians/configs/vanilla.json')
+    splat_settings = None
     first_iter = 0
     prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -339,7 +338,26 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
                         prev_to_new_SPT_order = torch.searchsorted(SPT_indices, prev_SPT_indices)
 
-                        equal_SPT_cache_mask = (prev_to_new_SPT_order < len(SPT_indices)) & (SPT_indices[prev_to_new_SPT_order.clamp_max(len(SPT_indices)-1)] == prev_SPT_indices)
+
+                        # Clamp indices to valid range [0, len(SPT_indices) - 1]
+                        clamped_indices = prev_to_new_SPT_order.clamp(0, len(SPT_indices) - 1)
+
+                        # Build mask: only trust indices that are in bounds and match
+                        valid_range_mask = (prev_to_new_SPT_order >= 0) & (prev_to_new_SPT_order < len(SPT_indices))
+                        if SPT_indices.numel() > 0:
+                            # Clamp and check validity
+                            clamped_indices = prev_to_new_SPT_order.clamp(0, len(SPT_indices) - 1)
+                            valid_range_mask = (prev_to_new_SPT_order >= 0) & (prev_to_new_SPT_order < len(SPT_indices))
+
+                            # Safe comparison
+                            equal_SPT_cache_mask = valid_range_mask & (SPT_indices[clamped_indices] == prev_SPT_indices)
+                        else:
+                            # Nothing to compare against
+                            equal_SPT_cache_mask = torch.zeros_like(prev_SPT_indices, dtype=torch.bool)
+
+                        #equal_SPT_cache_mask = valid_range_mask & (SPT_indices[clamped_indices] == prev_SPT_indices)
+                        #index -1 access sometimes..
+                        #equal_SPT_cache_mask = (prev_to_new_SPT_order < len(SPT_indices)) & (SPT_indices[prev_to_new_SPT_order.clamp_max(len(SPT_indices)-1)] == prev_SPT_indices)
                         prev_equal_SPT_cache_indices = torch.nonzero(equal_SPT_cache_mask, as_tuple=True)[0]
                         equal_SPT_cache_indices = prev_to_new_SPT_order[equal_SPT_cache_mask]
 
@@ -385,7 +403,10 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         else:
                             print("No SPTs loaded")
                             load_SPT_gaussian_indices, load_SPT_starts = torch.empty(0, dtype=torch.int32, device='cuda'), torch.empty(0, dtype=torch.int32, device='cuda')
-                        print(clock())
+                        
+                        # FLAG
+                        
+                        print(f'timestamp:{clock()} | len(load_SPT_indices)={len(load_SPT_indices)} | len(SPT_indices)={len(SPT_indices)} | ')
                         #SPT_counts += gaussians.skybox_points
 
                         ### BAND AID FIX
