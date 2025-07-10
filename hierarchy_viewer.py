@@ -39,6 +39,7 @@ from gaussian_hierarchy._C import  get_spt_cut_cuda
 from gaussian_renderer import occlusion_cull
 import json
 import pickle
+from debugging import timestamp_wrapper
 
 clock_start = True
 clock_time = time.time()
@@ -52,6 +53,8 @@ def clock():
         clock_start = True
         return time.time()-clock_time
 
+
+render_metrics = timestamp_wrapper()
 
 def direct_collate(x):
     return x
@@ -282,6 +285,11 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     if not freeze_view:
 
                         ############# SPT Cache
+
+                        # FILTER PHASE BEGIN
+
+                        render_metrics.stamp('filter')
+
                         if Use_Bounding_Spheres:
                             bounds = gaussians.bounding_sphere_radii
                         else: 
@@ -464,8 +472,11 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         assert(SPT_starts_new[-1] == len(gaussian_indices))
                         number_to_render = len(gaussian_indices)
                         distance_multiplier = distance_multiplier
-                        
-                        
+                    
+                    # LOAD PHASE BEGIN
+
+                        render_metrics.stamp('load')
+
                         load_tensor = gaussians.properties[load_from_disk_indices, :].cuda(non_blocking=non_blocking)
 
                         means3D = nn.Parameter(torch.cat((means3D[:gaussians.skybox_points], load_tensor[:, xyz1:xyz2].cuda(non_blocking=non_blocking), means3D[reuse_gaussians_mask])).contiguous())
@@ -484,7 +495,9 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         
                         
                     
-                    
+                    # RENDER PHASE BEGIN
+
+                    render_metrics.stamp('render')
                     
                      # Render
                     if Rasterizer == "Hierarchical":
@@ -588,10 +601,23 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         net_image = image.cpu()
                         net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to('cpu').numpy())
                 if not replay:
-                    train_params = {"Num_Rendered" : len(gaussian_indices), "Number_of_SPTs" : len(SPT_indices), "Percentage_Rendered" : len(gaussian_indices)/gaussians.size, "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts)}
+                    train_params = {"Num_Rendered" : len(gaussian_indices),
+                                    "Number_of_SPTs" : len(SPT_indices), 
+                                    "Percentage_Rendered" : len(gaussian_indices)/gaussians.size,
+                                    "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts),
+                                    "TEST": 420.69}
+                    # ADD STATS HERE
+                    render_metrics.stamp('do you know the tragedy of darth plaguise the wise?')
+
+                    # print(render_metrics.get_timings())
+                    # print mean timings over last 10 iterations
+                    print(render_metrics.get_means())
+
                     network_gui.send(net_image_bytes, json.dumps({"iteration" : 99, "num_gaussians" : gaussians.size, "loss" : 0, "sh_degree":1, "error" : 0, "paused" : False, "train_params" : train_params})) #dataset.source_path)
                     if do_training and ((iteration < int(opt.iterations)) or not keep_alive_):
                         break
+                
+                
             except ValueError as e:
                 print(e)
                 raise e
