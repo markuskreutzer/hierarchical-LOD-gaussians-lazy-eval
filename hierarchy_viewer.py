@@ -213,7 +213,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                 node_child_count: int,
                 node_first_child: int,
                 node_next_sibling: int,
-                node_max_side_length: int
+                node_max_side_length: int,
+                node_min_distance_squared: float
             ):
                 self.position = position
                 self.scaling = scaling
@@ -223,8 +224,10 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                 self.node_first_child = node_first_child
                 self.node_next_sibling = node_next_sibling
                 self.node_max_side_length = node_max_side_length
+                self.node_min_distance_squared = node_min_distance_squared
                 self.scaling = scaling
                 self.position = position
+                
 
             def to_dict(self):
                 return {
@@ -235,7 +238,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     "node_child_count": self.node_child_count,
                     "node_first_child": self.node_first_child,
                     "node_next_sibling": self.node_next_sibling,
-                    "node_max_side_length": self.node_max_side_length
+                    "node_max_side_length": self.node_max_side_length,
+                    "node_min_distance_squared": self.node_min_distance_squared
                 }
 
             @classmethod
@@ -248,7 +252,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     node_child_count=data["node_child_count"],
                     node_first_child=data["node_first_child"],
                     node_next_sibling=data["node_next_sibling"],
-                    node_max_side_length=data["node_max_side_length"]
+                    node_max_side_length=data["node_max_side_length"],
+                    node_min_distance_squared=data["node_min_distance_squared"]
                 )
             
             def print_info(self):
@@ -261,6 +266,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                 print(f"  node_first_child: {self.node_first_child}")
                 print(f"  node_next_sibling: {self.node_next_sibling}")
                 print(f"  node_max_side_length: {self.node_max_side_length}")
+                print(f"  node_min_distance_squared: {self.node_min_distance_squared}")
+                
 
             
         def export_local_groups_to_json(local_groups, filepath):
@@ -282,7 +289,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
             node_first_child = gaussians.upper_tree_nodes[idx, 3].item()
             node_next_sibling = gaussians.upper_tree_nodes[idx, 4].item()
             node_max_side_length = gaussians.upper_tree_nodes[idx, 5].item()
-            local_group = LocalGroup(position, scaling, node_depth, node_parent, node_child_count, node_first_child, node_next_sibling, node_max_side_length)
+            min_distance_squared = gaussians.min_distance_squared[idx].item()
+            local_group = LocalGroup(position, scaling, node_depth, node_parent, node_child_count, node_first_child, node_next_sibling, node_max_side_length, min_distance_squared)
             #local_group.print_info()
             local_groups.append(local_group)
 
@@ -291,8 +299,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
     
 
-    #export_hierarchy('local_groups_10k.json')
-    #exit(0)
+    export_hierarchy('local_groups_10k.json')
+    exit(0)
     
     prev_SPT_distances = torch.empty(0, dtype = torch.float32, device='cuda')
     prev_SPT_indices = torch.empty(0, dtype = torch.int32, device='cuda')
