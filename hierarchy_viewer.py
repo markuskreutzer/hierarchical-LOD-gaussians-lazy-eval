@@ -8,6 +8,7 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+from scene.cameras import save_camera_to_json
 from utils.general_utils import get_expon_lr_func
 import os
 import torch
@@ -68,7 +69,7 @@ lr_multiplier = 1
 Random_Hierarchy_Cut = True
 Only_Noise_Visible = True
 #MCMC
-Max_Cap = 25_000_000
+Max_Cap = 6_000_000
 MCMC_Densification = True
 MCMC_Noise_LR = 0  #5e5
 lambda_scaling = 0
@@ -192,7 +193,106 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
         means3D, opacity, scales, rotations, features_dc, features_rest, gaussian_indices = torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0, 1), device='cuda', dtype=torch.float32), torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0,4), device='cuda', dtype=torch.float32), torch.empty((0, 1, 3), device='cuda', dtype=torch.float32), torch.empty((0,15, 3), device='cuda', dtype=torch.float32), torch.empty(0, device='cuda', dtype=torch.int32)
     
     
+    # export stuff
     
+
+    def export_hierarchy(filename):
+        print('exporting hierarchy..')
+
+        n_gaussians = len(gaussians.upper_tree_nodes)
+
+        print(f'dataset has {n_gaussians} nodes')
+
+        class LocalGroup:
+            def __init__(
+                self,
+                position: np.ndarray,
+                scaling: np.ndarray,
+                node_depth: int,
+                node_parent: int,
+                node_child_count: int,
+                node_first_child: int,
+                node_next_sibling: int,
+                node_max_side_length: int
+            ):
+                self.position = position
+                self.scaling = scaling
+                self.node_depth = node_depth
+                self.node_parent = node_parent
+                self.node_child_count = node_child_count
+                self.node_first_child = node_first_child
+                self.node_next_sibling = node_next_sibling
+                self.node_max_side_length = node_max_side_length
+                self.scaling = scaling
+                self.position = position
+
+            def to_dict(self):
+                return {
+                    "position": self.position.tolist(),
+                    "scaling": self.scaling.tolist(),
+                    "node_depth": self.node_depth,
+                    "node_parent": self.node_parent,
+                    "node_child_count": self.node_child_count,
+                    "node_first_child": self.node_first_child,
+                    "node_next_sibling": self.node_next_sibling,
+                    "node_max_side_length": self.node_max_side_length
+                }
+
+            @classmethod
+            def from_dict(cls, data):
+                return cls(
+                    position=np.array(data["position"]),
+                    scaling=np.array(data["scaling"]),
+                    node_depth=data["node_depth"],
+                    node_parent=data["node_parent"],
+                    node_child_count=data["node_child_count"],
+                    node_first_child=data["node_first_child"],
+                    node_next_sibling=data["node_next_sibling"],
+                    node_max_side_length=data["node_max_side_length"]
+                )
+            
+            def print_info(self):
+                print("LocalGroup:")
+                print(f"  position: {self.position}")
+                print(f"  scaling: {self.scaling}")
+                print(f"  node_depth: {self.node_depth}")
+                print(f"  node_parent: {self.node_parent}")
+                print(f"  node_child_count: {self.node_child_count}")
+                print(f"  node_first_child: {self.node_first_child}")
+                print(f"  node_next_sibling: {self.node_next_sibling}")
+                print(f"  node_max_side_length: {self.node_max_side_length}")
+
+            
+        def export_local_groups_to_json(local_groups, filepath):
+            with open(filepath, "w") as f:
+                json.dump([lg.to_dict() for lg in local_groups], f, indent=2)
+
+        def load_local_groups_from_json(filepath):
+            with open(filepath, "r") as f:
+                data = json.load(f)
+                return [LocalGroup.from_dict(item) for item in data]        
+
+        local_groups = []
+        for idx in range(len(gaussians.upper_tree_nodes)):
+            position=gaussians.upper_tree_xyz[idx, :3].detach().cpu().numpy()
+            scaling=gaussians.upper_tree_scaling[idx, :3].detach().cpu().numpy()
+            node_depth = gaussians.upper_tree_nodes[idx, 0].item()
+            node_parent = gaussians.upper_tree_nodes[idx, 1].item()
+            node_child_count = gaussians.upper_tree_nodes[idx, 2].item()
+            node_first_child = gaussians.upper_tree_nodes[idx, 3].item()
+            node_next_sibling = gaussians.upper_tree_nodes[idx, 4].item()
+            node_max_side_length = gaussians.upper_tree_nodes[idx, 5].item()
+            local_group = LocalGroup(position, scaling, node_depth, node_parent, node_child_count, node_first_child, node_next_sibling, node_max_side_length)
+            #local_group.print_info()
+            local_groups.append(local_group)
+
+        export_local_groups_to_json(local_groups, filename)
+        print(f'hierarchy exported to {filename}')
+
+    
+
+    #export_hierarchy('local_groups_10k.json')
+    #exit(0)
     
     prev_SPT_distances = torch.empty(0, dtype = torch.float32, device='cuda')
     prev_SPT_indices = torch.empty(0, dtype = torch.int32, device='cuda')
@@ -218,6 +318,13 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                 net_image_bytes = None
                 if not replay:
                     custom_cam, do_training, keep_alive_, scaling_modifer, slider = network_gui.receive()
+
+                    def export_camera(camera, filename):
+                        save_camera_to_json(camera, filename)
+                        print(f'camera exported to {filename}')
+
+                    export_camera(custom_cam, 'base_cam.json')
+
                     if "distance_multiplier" in slider:
                         distance_multiplier = slider["distance_multiplier"]
                     else:
@@ -277,7 +384,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     if record_trajectory:
                         with open(f"CameraPaths/camera_path_{camera_path_id}.txt", "ab") as f:
                             pickle.dump(custom_cam, f)
-                    
+
                     viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
                     #viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
                     viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
@@ -288,32 +395,32 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
                         # FILTER PHASE BEGIN
 
+                        lazy_evaluation_metrics = {}
+                        lazy_evaluation_metrics["len(gaussians.upper_tree_xyz)"] = len(gaussians.upper_tree_xyz)
                         render_metrics.stamp('filter')
+
+                        lod_threshold = 1.0
+                        angle_threshold = 1.0
+
+                        
 
                         if Use_Bounding_Spheres:
                             bounds = gaussians.bounding_sphere_radii
                         else: 
                             bounds = (gaussians.scaling_activation(torch.max(gaussians.upper_tree_scaling, dim=-1)[0]) * 3.0)
+
                         planes = gaussians.extract_frustum_planes(viewpoint_cam.full_proj_transform.cuda())
+
                         if Use_Frustum_Culling:
                             frustum_cull = lambda indices : gaussians.frustum_cull_spheres(gaussians.upper_tree_xyz[indices], bounds[indices], planes)
                         else:
                             frustum_cull = lambda indices : torch.ones(len(indices), dtype = torch.bool)
+
                         camera_position = viewpoint_cam.camera_center.cuda()
-                        clock()
+
                         LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > (camera_position - gaussians.upper_tree_xyz[indices]).square().sum(dim=-1) * distance_multiplier
                         # The coarse cut contains intermediate nodes from the upper tree and leaf nodes, with some leaf nodes containing SPTs
                         coarse_cut = gaussians.cut_hierarchy_on_condition(gaussians.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=frustum_cull)
-
-                        if Use_Occlusion_Culling:
-                            bg_color = [0, 0, 0]
-                            background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-                            temp = len(coarse_cut)
-                            occlusion_indices = gaussians.upper_tree_nodes[coarse_cut, 5]
-                            occlusion_mask, occlusion_image = occlusion_cull(occlusion_indices.to(Storage_Device), gaussians, viewpoint_cam, pipe, background)
-                            occlusion_mask = occlusion_mask.cuda()
-                            coarse_cut = coarse_cut[occlusion_mask]
-                            print(f"Occlusion Cull {temp - len(coarse_cut)} out of {temp} upper tree gaussians")
 
                         # leaf nodes have 0 children
                         cut_leaf_nodes = coarse_cut[gaussians.upper_tree_nodes[coarse_cut, 2] == 0]
@@ -326,23 +433,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         SPT_upper_tree_indices = cut_leaf_nodes[gaussians.upper_tree_nodes[cut_leaf_nodes, 3] >= 0]
 
                         SPT_distances = (gaussians.upper_tree_xyz[SPT_upper_tree_indices] - camera_position).pow(2).sum(1).sqrt() * distance_multiplier
-
-                        ### Band Aid Fix
-                        #if len(SPT_indices) == 0:
-                            # Just load whatever is already in memory
-                            #SPT_indices = torch.zeros(1, dtype=torch.int32, device='cuda')
-                            #if prev_SPT_indices.size(0) > 0:
-                            #    SPT_indices[0] = prev_SPT_indices[-1]
-                            #else:
-                            #    # Or just load the first one, whatever
-                            #    SPT_indices[0] = torch.zeros(1, dtype=torch.int32, device='cuda')
-                            #SPT_distances = torch.zeros(1, dtype=torch.float32, device='cuda')
-                            #SPT_distances[0] = 100000.0
-                            #print("No SPT in image")
-                            #clock()
-                            
-                        ### Band Aid Fix
-                        
+                        gaussians.upper_tree_xyz[gaussians.upper_tree_nodes[:, 3] == 0]
 
                         prev_to_new_SPT_order = torch.searchsorted(SPT_indices, prev_SPT_indices)
 
@@ -364,7 +455,6 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                             equal_SPT_cache_mask = torch.zeros_like(prev_SPT_indices, dtype=torch.bool)
 
                         #equal_SPT_cache_mask = valid_range_mask & (SPT_indices[clamped_indices] == prev_SPT_indices)
-                        #index -1 access sometimes..
                         #equal_SPT_cache_mask = (prev_to_new_SPT_order < len(SPT_indices)) & (SPT_indices[prev_to_new_SPT_order.clamp_max(len(SPT_indices)-1)] == prev_SPT_indices)
                         prev_equal_SPT_cache_indices = torch.nonzero(equal_SPT_cache_mask, as_tuple=True)[0]
                         equal_SPT_cache_indices = prev_to_new_SPT_order[equal_SPT_cache_mask]
@@ -397,6 +487,9 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         #keep_gaussians_mask[:gaussians.skybox_points] = True
 
                         #mask = torch.isin(SPT_indices, keep_SPT_indices)
+                    # LOAD PHASE BEGIN
+
+                        render_metrics.stamp('load')
 
                         load_SPT_mask = torch.zeros(len(SPT_indices), device='cuda', dtype=torch.bool)
                         load_SPT_mask.scatter_(0, equal_SPT_cache_indices[close_enough].to(torch.int64), True)      
@@ -417,24 +510,12 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         print(f'timestamp:{clock()} | len(load_SPT_indices)={len(load_SPT_indices)} | len(SPT_indices)={len(SPT_indices)} | ')
                         #SPT_counts += gaussians.skybox_points
 
-                        ### BAND AID FIX
-                        #difference = load_SPT_starts[1:] - load_SPT_starts[:-1]
-                        #empty_SPTs = torch.where(difference == 0)[0]
-                        #if len(empty_SPTs) > 0:
-                        #    print(f"Empty SPTs {empty_SPTs} encountered")
-                        #    #mask = torch.ones(len(load_SPT_starts), dtype=torch.bool, device='cuda')
-                        #    #mask.scatter_(0, empty_SPTs, False)
-                        #    #load_SPT_starts = load_SPT_starts[mask]
-                        #    #load_SPT_distances = load_SPT_distances[mask]
-                        #    #load_SPT_indices = load_SPT_indices[mask]
                         if len(load_SPT_starts) > 0:    
                             if len(load_SPT_gaussian_indices) == load_SPT_starts[-1]:
                                 print("Last SPT empty")
                                 load_SPT_starts = load_SPT_starts[:-1]
                                 load_SPT_distances = load_SPT_distances[:-1]
                                 load_SPT_indices = load_SPT_indices[:-1]
-                        #    
-                        ### BAND AID FIX
 
                         assert(len(load_SPT_starts.unique()) == len(load_SPT_starts))
                         #cache_SPT_cache_indices = torch.where(~equal_SPT_cache_mask)[0]    
@@ -447,10 +528,6 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
                         SPT_starts_new[:len(load_SPT_starts)] = load_SPT_starts + gaussians.skybox_points
                         SPT_starts_new[len(load_SPT_starts)] = len(load_SPT_gaussian_indices) + gaussians.skybox_points
-                        #prefix = len(cut_SPTs) + gaussians.skybox_points
-                        #for index, i in enumerate(SPT_keep_counts_indices):
-                        #    SPT_starts_new[index + len(SPT_counts)] = prefix
-                        #    prefix += (prev_SPT_counts[i+1] - prev_SPT_counts[i]).item()
 
                         sizes = prev_SPT_starts[prev_keep_SPT_cache_indices + 1] - prev_SPT_starts[prev_keep_SPT_cache_indices]
                         SPT_starts_new[len(load_SPT_starts) + 1:len(load_SPT_starts) + 1 + len(sizes)] = torch.cumsum(sizes, dim=0) +  len(load_SPT_gaussian_indices) + gaussians.skybox_points
@@ -462,8 +539,6 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
                         load_from_disk_indices = torch.cat((upper_tree_nodes_to_render, load_SPT_gaussian_indices))
 
-
-
                         gaussian_indices = torch.cat((gaussian_indices[:gaussians.skybox_points], load_from_disk_indices, gaussian_indices[reuse_gaussians_mask]))
                         print(f"Load Percent: {len(load_from_disk_indices) * 100/ number_of_gaussians_to_render}")
                         load_from_disk_indices = load_from_disk_indices.to(Storage_Device)
@@ -473,9 +548,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         number_to_render = len(gaussian_indices)
                         distance_multiplier = distance_multiplier
                     
-                    # LOAD PHASE BEGIN
-
-                        render_metrics.stamp('load')
+                    
 
                         load_tensor = gaussians.properties[load_from_disk_indices, :].cuda(non_blocking=non_blocking)
 
@@ -492,8 +565,6 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         prev_SPT_distances = SPT_distances
                         prev_SPT_starts = SPT_starts_new
                         torch.cuda.empty_cache()
-                        
-                        
                     
                     # RENDER PHASE BEGIN
 
@@ -604,11 +675,14 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     train_params = {"Num_Rendered" : len(gaussian_indices),
                                     "Number_of_SPTs" : len(SPT_indices), 
                                     "Percentage_Rendered" : len(gaussian_indices)/gaussians.size,
-                                    "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts),
-                                    "TEST": 420.69}
-                    # ADD STATS HERE
-                    render_metrics.stamp('do you know the tragedy of darth plaguise the wise?')
+                                    "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts)}
+                    
+                    train_params.update(lazy_evaluation_metrics)
 
+                    # ADD STATS HERE
+                    render_metrics.stamp('have you ever heard the tragedy of darth plaguise the wise?')
+
+                    render_metrics.get_timings()
                     # print(render_metrics.get_timings())
                     # print mean timings over last 10 iterations
                     print(render_metrics.get_means())

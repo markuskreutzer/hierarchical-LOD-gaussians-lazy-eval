@@ -107,6 +107,36 @@ class Camera(nn.Module):
 
         self.camera_center = self.world_view_transform.inverse()[3, :3].to(self.data_device)
 
+    def to_dict(self):
+        return {
+            "uid": self.uid,
+            "colmap_id": self.colmap_id,
+            "R": self.R.detach().cpu().tolist() if isinstance(self.R, torch.Tensor) else self.R,
+            "T": self.T.detach().cpu().tolist() if isinstance(self.T, torch.Tensor) else self.T,
+            "FoVx": self.FoVx,
+            "FoVy": self.FoVy,
+            "image_name": self.image_name,
+            "image_path": self.image_path,
+            "focal_length": self.focal_length,
+            "image_width": self.image_width,
+            "image_height": self.image_height,
+            "znear": self.znear,
+            "zfar": self.zfar,
+            "trans": self.trans.tolist() if isinstance(self.trans, np.ndarray) else self.trans,
+            "scale": self.scale,
+            "world_view_transform": self.world_view_transform.detach().cpu().tolist(),
+            "projection_matrix": self.projection_matrix.detach().cpu().tolist(),
+            "full_proj_transform": self.full_proj_transform.detach().cpu().tolist(),
+            "full_proj_transform_inverse": self.full_proj_transform_inverse.detach().cpu().tolist(),
+            "camera_center": self.camera_center.detach().cpu().tolist(),
+        }
+    
+import json
+
+def save_camera_to_json(camera: Camera, filename: str):
+    with open(filename, "w") as f:
+        json.dump(camera.to_dict(), f, indent=2)
+
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
         self.image_width = width
@@ -120,5 +150,18 @@ class MiniCam:
         view_inv = torch.inverse(self.world_view_transform)
         self.camera_center = view_inv[3][:3]
         self.full_proj_transform_inverse = torch.inverse(self.full_proj_transform)
+    def to_dict(self):
+        return {
+            "image_width": self.image_width,
+            "image_height": self.image_height,
+            "FoVy": self.FoVy,
+            "FoVx": self.FoVx,
+            "znear": self.znear,
+            "zfar": self.zfar,
+            "world_view_transform": self.world_view_transform.detach().cpu().tolist(),
+            "full_proj_transform": self.full_proj_transform.detach().cpu().tolist(),
+            "full_proj_transform_inverse": self.full_proj_transform_inverse.detach().cpu().tolist(),
+            "camera_center": self.camera_center.detach().cpu().tolist()
+        }
 
 
